@@ -181,7 +181,7 @@ async function ask(text, mode) {
 
   const typing = addTyping();
   try {
-    const data = await api('/api/ask', { method: 'POST', body: JSON.stringify({ text: question, mode, threadId: state.threadId }) });
+    const data = await api('/api/ask', { method: 'POST', body: JSON.stringify({ text: question, mode, threadId: state.threadId, model: state.pickedModel }) });
     typing.remove();
     const parts = [];
     if (data.searches) parts.push('поиск в интернете');
@@ -354,6 +354,7 @@ document.getElementById('lessonSwitch')?.addEventListener('click', (event) => {
 document.getElementById('saveBtn').addEventListener('click', async () => {
   const style = document.querySelector('#styleSeg button[data-active="true"]')?.dataset.v;
   const model = document.querySelector('#modelList button[data-active="true"]')?.dataset.v;
+  state.pickedModel = model === 'glm-dan' ? 'glm-dan' : null;
   try {
     await api('/api/settings', {
       method: 'POST',
