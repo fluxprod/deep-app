@@ -76,6 +76,9 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding-left: 10px;
 }
 
 .dot {
@@ -482,6 +485,40 @@ textarea#text::placeholder { color: #62687a; }
   border-radius: 14px;
 }
 
+.seg--wrap {
+  flex-wrap: wrap;
+}
+
+.seg--wrap button {
+  flex: 1 1 45%;
+}
+
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.models__name {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 107, 107, 0.16);
+  color: #ff9b9b;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
 .seg button {
   flex: 1;
   border: 0;
@@ -599,6 +636,60 @@ textarea#promptBox:focus { border-color: rgba(205, 255, 74, 0.4); }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- список чатов ---------- */
+.threads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.thread {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.thread[data-active='true'] {
+  border-color: rgba(205, 255, 74, 0.4);
+  background: rgba(205, 255, 74, 0.06);
+}
+
+.thread__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.thread__title {
+  font-size: 14.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread__date {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.thread__del {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.thread__del:active { color: #ff8b8b; }
 
 /* ---------- экран входа по ключу ---------- */
 .gate {

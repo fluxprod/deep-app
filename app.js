@@ -23,6 +23,8 @@ const state = {
   lastQuestion: '',
   settings: null,
   lessonMode: false,
+  searchMode: true,
+  threadId: null,
 };
 
 /* ---------- инфраструктура ---------- */
@@ -179,7 +181,7 @@ async function ask(text, mode) {
 
   const typing = addTyping();
   try {
-    const data = await api('/api/ask', { method: 'POST', body: JSON.stringify({ text: question, mode }) });
+    const data = await api('/api/ask', { method: 'POST', body: JSON.stringify({ text: question, mode, threadId: state.threadId }) });
     typing.remove();
     const parts = [];
     if (data.searches) parts.push('поиск в интернете');
@@ -254,6 +256,20 @@ chips.addEventListener('click', async (event) => {
     return;
   }
 
+  if (chip === 'free') {
+    const el = document.querySelector('[data-chip="free"]');
+    const on = !(el && el.classList.contains('chip--on'));
+    if (el) el.classList.toggle('chip--on', on);
+    try {
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ freeMode: on }) });
+      toast(on ? 'Свободный режим включён' : 'Свободный режим выключен');
+    } catch {
+      if (el) el.classList.toggle('chip--on', !on);
+      toast('Не удалось переключить');
+    }
+    return;
+  }
+
   if (chip === 'lesson') {
     state.lessonMode = !state.lessonMode;
     button.classList.toggle('chip--on', state.lessonMode);
@@ -310,7 +326,7 @@ document.getElementById('settingsBtn').addEventListener('click', async () => {
     document.querySelectorAll('#styleSeg button').forEach((b) => {
       b.dataset.active = String(b.dataset.v === data.style);
     });
-    document.querySelectorAll('#modelSeg button').forEach((b) => {
+    document.querySelectorAll('#modelList button').forEach((b) => {
       b.dataset.active = String(b.dataset.v === data.model);
     });
     document.getElementById('sheetFoot').textContent = data.model === 'deepseek-v4-pro' ? 'Модель V4 Pro дороже в 3–4 раза' : '';
@@ -319,8 +335,8 @@ document.getElementById('settingsBtn').addEventListener('click', async () => {
   }
 });
 
-for (const segment of ['styleSeg', 'modelSeg']) {
-  document.getElementById(segment).addEventListener('click', (event) => {
+for (const segment of ['styleSeg', 'modelList']) {
+  document.getElementById(segment)?.addEventListener('click', (event) => {
     const button = event.target.closest('button');
     if (!button) return;
     document.querySelectorAll(`#${segment} button`).forEach((b) => {
@@ -337,7 +353,7 @@ document.getElementById('lessonSwitch')?.addEventListener('click', (event) => {
 
 document.getElementById('saveBtn').addEventListener('click', async () => {
   const style = document.querySelector('#styleSeg button[data-active="true"]')?.dataset.v;
-  const model = document.querySelector('#modelSeg button[data-active="true"]')?.dataset.v;
+  const model = document.querySelector('#modelList button[data-active="true"]')?.dataset.v;
   try {
     await api('/api/settings', {
       method: 'POST',
@@ -349,6 +365,83 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
   } catch {
     toast('Сохранять может только владелец');
   }
+});
+
+/* ---------- чаты ---------- */
+
+const chatsSheet = document.getElementById('chats');
+
+function openChats(open) {
+  chatsSheet.dataset.open = open ? 'true' : 'false';
+  chatsSheet.setAttribute('aria-hidden', open ? 'false' : 'true');
+}
+
+async function loadThreads() {
+  const list = document.getElementById('threadList');
+  try {
+    const data = await api('/api/threads');
+    state.activeThread = data.active;
+    list.innerHTML = '';
+    for (const thread of data.threads) {
+      const row = document.createElement('div');
+      row.className = 'thread';
+      row.dataset.active = String(thread.id === data.active);
+      const date = new Date(thread.updatedAt * 1000);
+      row.innerHTML = `<div class="thread__body"><div class="thread__title"></div><div class="thread__date"></div></div><button class="thread__del" aria-label="Удалить">✕</button>`;
+      row.querySelector('.thread__title').textContent = thread.title;
+      row.querySelector('.thread__date').textContent = `${date.toLocaleDateString('ru-RU')} ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+      row.addEventListener('click', async (event) => {
+        if (event.target.closest('.thread__del')) {
+          await api(`/api/threads/${thread.id}`, { method: 'DELETE' });
+          await loadThreads();
+          return;
+        }
+        await openThread(thread.id);
+      });
+      list.appendChild(row);
+    }
+    if (!data.threads.length) {
+      list.innerHTML = '<div class="hint">Чатов пока нет</div>';
+    }
+  } catch {
+    list.innerHTML = '<div class="hint">Не удалось загрузить чаты</div>';
+  }
+}
+
+async function openThread(threadId) {
+  state.threadId = threadId;
+  openChats(false);
+  feed.innerHTML = '';
+  const history = await api(`/api/history?thread=${threadId}`);
+  const messages = history.messages || [];
+  if (!messages.length) {
+    const restored = empty.cloneNode(true);
+    restored.id = 'empty';
+    feed.appendChild(restored);
+  }
+  for (const message of messages.slice(-30)) {
+    if (message.role === 'user') {
+      addUserMessage(message.text);
+      state.lastQuestion = message.text;
+    } else {
+      addBotMessage(message.text, '');
+    }
+  }
+  scrollDown(false);
+}
+
+document.getElementById('chatsBtn').addEventListener('click', async () => {
+  openChats(true);
+  await loadThreads();
+});
+
+chatsSheet.addEventListener('click', (event) => {
+  if (event.target.closest('[data-close]')) openChats(false);
+});
+
+document.getElementById('newChatBtn').addEventListener('click', async () => {
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({}) });
+  await openThread(created.id);
 });
 
 /* ---------- экран входа по ключу ---------- */
@@ -437,6 +530,7 @@ async function boot() {
     modelLabel.textContent = me.model === 'deepseek-v4-pro' ? 'DeepSeek V4 Pro' : 'DeepSeek Flash';
     state.lessonMode = !!me.lessonMode;
     state.searchMode = me.searchMode !== 'off';
+    document.querySelector('[data-chip="free"]')?.classList.toggle('chip--on', !!me.freeMode);
     document.querySelector('[data-chip="search"]')?.classList.toggle('chip--on', state.searchMode);
 
     const history = await api('/api/history');

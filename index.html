@@ -21,6 +21,11 @@
 
     <div class="app">
       <header class="topbar">
+        <button class="icon-btn" id="chatsBtn" aria-label="Чаты">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+            <path d="M4 6h16M4 12h16M4 18h10" />
+          </svg>
+        </button>
         <div class="brand">
           <span class="dot" id="statusDot"></span>
           <div class="brand__text">
@@ -84,14 +89,39 @@
 
         <div class="field">
           <label>Модель</label>
-          <div class="seg" id="modelSeg">
-            <button data-v="deepseek-flash">Flash</button>
-            <button data-v="deepseek-v4-pro">V4 Pro</button>
+          <div class="models" id="modelList">
+            <span class="models__name">DeepSeek</span>
+            <div class="seg seg--wrap">
+              <button data-v="deepseek-flash">Flash</button>
+              <button data-v="deepseek-v4-pro">V4 Pro</button>
+            </div>
+            <span class="models__name">Z.ai</span>
+            <div class="seg seg--wrap">
+              <button data-v="glm-4.5-flash">GLM Flash</button>
+              <button data-v="glm-4.6">GLM 4.6</button>
+            </div>
+            <span class="models__name">OpenRouter</span>
+            <div class="seg seg--wrap">
+              <button data-v="openrouter/uncensored">Без цензуры <span class="badge">uncensored</span></button>
+            </div>
           </div>
         </div>
 
         <button class="primary" id="saveBtn">Сохранить</button>
         <div class="sheet__foot" id="sheetFoot"></div>
+      </div>
+    </div>
+
+    <div class="sheet" id="chats" aria-hidden="true">
+      <div class="sheet__backdrop" data-close></div>
+      <div class="sheet__panel">
+        <div class="sheet__grab"></div>
+        <div class="sheet__head">
+          <h2>Чаты</h2>
+          <button class="icon-btn" data-close aria-label="Закрыть">✕</button>
+        </div>
+        <button class="primary" id="newChatBtn">Новый чат</button>
+        <div class="threads" id="threadList"></div>
       </div>
     </div>
 
