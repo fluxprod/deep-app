@@ -1,6 +1,6 @@
 {
-  "name": "Deep — ИИ-помощник",
-  "short_name": "Deep",
+  "name": "Дип — ИИ-помощник",
+  "short_name": "Дип",
   "description": "Личный ИИ-помощник на DeepSeek",
   "start_url": "./",
   "scope": "./",

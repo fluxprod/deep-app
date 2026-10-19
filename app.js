@@ -5,6 +5,30 @@ const WORKER_URL = 'https://study-bot.vanya-study.workers.dev';
 const WORKER_HOST = 'study-bot.vanya-study.workers.dev';
 const API_BASE = location.hostname === WORKER_HOST ? '' : WORKER_URL;
 
+const SAMPLES = [
+ 'Реши 3x − 7 = 14','Сколько молей в 36 г воды?','Почему небо голубое?','Объясни теорему Пифагора на пальцах',
+ 'Что такое энтропия?','Как работает фотосинтез?','Проверь моё решение','Как быстро выучить 30 слов?',
+ 'Что почитать про космос?','Объясни разницу между массой и весом','Напиши план сочинения про осень',
+ 'Придумай 5 задач на проценты','Как решать системы уравнений?','Что такое ВВП простыми словами',
+ 'Почему идёт дождь?','Сколько планет в Солнечной системе?','Кто такой Ломоносов?','Объясни, что такое инфляция',
+ 'Как запомнить формулы по физике?','Что такое ДНК?','Переведи на английский: «я учусь в школе»',
+ 'Придумай вопрос для викторины','Как подготовиться к контрольной за вечер?','Что такое логарифм?',
+ 'Объясни, как работает двигатель','Почему вода кипит при 100 градусах?','Напиши короткий рассказ про робота',
+ 'Как считать дроби?','Что такое гравитация?','Помоги с домашкой по химии'
+];
+function renderSamples() {
+  const box = document.getElementById('samples');
+  if (!box) return;
+  box.innerHTML = '';
+  const pool = [...SAMPLES].sort(() => Math.random() - 0.5).slice(0, 3);
+  for (const text of pool) {
+    const b = document.createElement('button');
+    b.className = 'sample';
+    b.dataset.q = text;
+    b.textContent = text;
+    box.appendChild(b);
+  }
+}
 const feed = document.getElementById('feed');
 const empty = document.getElementById('empty');
 const form = document.getElementById('form');
@@ -563,4 +587,5 @@ async function boot() {
   }
 }
 
+renderSamples();
 boot();
