@@ -1,36 +1,38 @@
 const tg = window.Telegram?.WebApp;
 
 // Статика может жить на GitHub Pages, а API — на воркере: тогда нужен абсолютный адрес.
+// Локально (127.0.0.1 воркера) API тот же самый — ходим по относительному пути.
 const WORKER_URL = 'https://study-bot.vanya-study.workers.dev';
 const WORKER_HOST = 'study-bot.vanya-study.workers.dev';
-const API_BASE = location.hostname === WORKER_HOST ? '' : WORKER_URL;
+const LOCAL_HOST = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+const API_BASE = LOCAL_HOST || location.hostname === WORKER_HOST ? '' : WORKER_URL;
+
+const MAX_PHOTOS = 50;
+const PHOTO_BATCH = 6;
+const MAX_SIDE = 1400;
 
 const SAMPLES = [
- 'Реши 3x − 7 = 14','Сколько молей в 36 г воды?','Почему небо голубое?','Объясни теорему Пифагора на пальцах',
- 'Что такое энтропия?','Как работает фотосинтез?','Проверь моё решение','Как быстро выучить 30 слов?',
- 'Что почитать про космос?','Объясни разницу между массой и весом','Напиши план сочинения про осень',
- 'Придумай 5 задач на проценты','Как решать системы уравнений?','Что такое ВВП простыми словами',
- 'Почему идёт дождь?','Сколько планет в Солнечной системе?','Кто такой Ломоносов?','Объясни, что такое инфляция',
- 'Как запомнить формулы по физике?','Что такое ДНК?','Переведи на английский: «я учусь в школе»',
- 'Придумай вопрос для викторины','Как подготовиться к контрольной за вечер?','Что такое логарифм?',
- 'Объясни, как работает двигатель','Почему вода кипит при 100 градусах?','Напиши короткий рассказ про робота',
- 'Как считать дроби?','Что такое гравитация?','Помоги с домашкой по химии'
+  'Реши 3x − 7 = 14','Сколько молей в 36 г воды?','Почему небо голубое?','Объясни теорему Пифагора на пальцах',
+  'Что такое энтропия?','Как работает фотосинтез?','Проверь моё решение','Как быстро выучить 30 слов?',
+  'Что почитать про космос?','Объясни разницу между массой и весом','Напиши план сочинения про осень',
+  'Придумай 5 задач на проценты','Как решать системы уравнений?','Что такое ВВП простыми словами',
+  'Почему идёт дождь?','Сколько планет в Солнечной системе?','Кто такой Ломоносов?','Объясни, что такое инфляция',
+  'Как запомнить формулы по физике?','Что такое ДНК?','Переведи на английский: «я учусь в школе»',
+  'Придумай вопрос для викторины','Как подготовиться к контрольной за вечер?','Что такое логарифм?',
+  'Объясни, как работает двигатель','Почему вода кипит при 100 градусах?','Напиши короткий рассказ про робота',
+  'Как считать дроби?','Что такое гравитация?','Помоги с домашкой по химии'
 ];
-function renderSamples() {
-  const box = document.getElementById('samples');
-  if (!box) return;
-  box.innerHTML = '';
-  const pool = [...SAMPLES].sort(() => Math.random() - 0.5).slice(0, 3);
-  for (const text of pool) {
-    const b = document.createElement('button');
-    b.className = 'sample';
-    b.dataset.q = text;
-    b.textContent = text;
-    box.appendChild(b);
-  }
-}
+
+/** Запасной список моделей: нужен, пока /api/me не ответил. */
+const FALLBACK_MODELS = [
+  { id: 'deepseek-flash', label: 'DeepSeek Flash', title: 'Flash', group: 'DeepSeek', vision: true, note: 'Видит фото и умеет искать в интернете.' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', title: 'V4 Pro', group: 'DeepSeek', vision: false, note: 'Сильнее, но дороже Flash.' },
+  { id: 'glm-4.5-flash', label: 'GLM Flash · Z.ai', title: 'GLM Flash', group: 'Z.ai', vision: false, note: 'Бесплатная модель Z.ai.' },
+  { id: 'glm-4.6', label: 'GLM 4.6 · Z.ai', title: 'GLM 4.6', group: 'Z.ai', vision: false, note: 'Нужен баланс на ключе Z.ai.' },
+  { id: 'glm-dan', label: 'Дип · без цензуры', title: 'Без цензуры', group: 'Z.ai · свободный', vision: false, badge: 'Z.ai', note: 'Характер без фильтра.' }
+];
+
 const feed = document.getElementById('feed');
-const empty = document.getElementById('empty');
 const form = document.getElementById('form');
 const textBox = document.getElementById('text');
 const sendBtn = document.getElementById('sendBtn');
@@ -39,16 +41,25 @@ const sheet = document.getElementById('sheet');
 const toastEl = document.getElementById('toast');
 const dot = document.getElementById('statusDot');
 const modelLabel = document.getElementById('modelLabel');
+const photoBtn = document.getElementById('photoBtn');
+const fileInput = document.getElementById('fileInput');
+const tray = document.getElementById('tray');
+const trayList = document.getElementById('trayList');
+const trayCount = document.getElementById('trayCount');
+const modelList = document.getElementById('modelList');
+const modelHint = document.getElementById('modelHint');
 
 const state = {
   initData: '',
   appKey: '',
   busy: false,
   lastQuestion: '',
-  settings: null,
-  lessonMode: false,
-  searchMode: true,
   threadId: null,
+  model: 'deepseek-flash',
+  models: FALLBACK_MODELS.slice(),
+  attachments: [],
+  spentToday: 0,
+  capUsd: 0
 };
 
 /* ---------- инфраструктура ---------- */
@@ -59,7 +70,7 @@ function toast(message) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => {
     toastEl.dataset.show = 'false';
-  }, 2200);
+  }, 2400);
 }
 
 function setStatus(kind) {
@@ -73,14 +84,24 @@ async function api(path, options = {}) {
       'content-type': 'application/json',
       'x-init-data': state.initData,
       ...(state.appKey ? { 'x-app-key': state.appKey } : {}),
-      ...(options.headers || {}),
-    },
+      ...(options.headers || {})
+    }
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = {};
   }
-  return res.json();
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = data.error || `http_${res.status}`;
+    err.data = data;
+    throw err;
+  }
+  return data;
 }
 
 function scrollDown(smooth = true) {
@@ -95,37 +116,182 @@ function escapeHtml(value) {
 
 /** Полужирные фрагменты модель иногда пишет markdown-ом — превращаем в акцент. */
 function formatAnswer(text) {
-  const safe = escapeHtml(text);
-  return safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return escapeHtml(text).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+/* ---------- модели ---------- */
+
+function modelInfo(id) {
+  return state.models.find((m) => m.id === id) || state.models[0] || FALLBACK_MODELS[0];
+}
+
+function currentModel() {
+  return modelInfo(state.model);
+}
+
+function renderModels() {
+  modelList.innerHTML = '';
+  let group = null;
+  let seg = null;
+  for (const model of state.models) {
+    if (model.group !== group) {
+      group = model.group;
+      const name = document.createElement('span');
+      name.className = 'models__name';
+      name.textContent = group;
+      modelList.appendChild(name);
+      seg = document.createElement('div');
+      seg.className = 'seg seg--wrap';
+      modelList.appendChild(seg);
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.v = model.id;
+    button.dataset.active = String(model.id === state.model);
+    button.textContent = model.title;
+    if (model.badge) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = model.badge;
+      button.append(' ', badge);
+    }
+    button.addEventListener('click', () => pickModel(model.id));
+    seg.appendChild(button);
+  }
+}
+
+function applyModelUi() {
+  const info = currentModel();
+  modelLabel.textContent = info.label;
+  photoBtn.hidden = !info.vision;
+  if (modelHint) modelHint.textContent = info.note || '';
+  if (!info.vision && state.attachments.length) {
+    state.attachments = [];
+    renderTray();
+    toast('Фото понимает только DeepSeek Flash');
+  }
+}
+
+async function pickModel(id) {
+  if (state.model === id) return;
+  state.model = id;
+  for (const button of modelList.querySelectorAll('button')) {
+    button.dataset.active = String(button.dataset.v === id);
+  }
+  applyModelUi();
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ model: id }) });
+    toast(`Модель: ${currentModel().label}`);
+  } catch (err) {
+    toast(err.code === 'forbidden' ? 'Менять модель может только владелец' : 'Не удалось сменить модель');
+  }
 }
 
 /* ---------- сообщения ---------- */
 
 function hideEmpty() {
+  const empty = document.getElementById('empty');
   if (empty && empty.parentElement) empty.remove();
 }
 
-function addUserMessage(text) {
+function buildEmpty() {
+  const section = document.createElement('section');
+  section.className = 'empty';
+  section.id = 'empty';
+
+  const title = document.createElement('h1');
+  title.textContent = 'Что решаем?';
+  const text = document.createElement('p');
+  text.textContent = 'Спроси словами или пришли до 50 фото задач — отвечу коротко и по делу. Фото понимает DeepSeek Flash.';
+
+  const samples = document.createElement('div');
+  samples.className = 'samples';
+  const pool = [...SAMPLES].sort(() => Math.random() - 0.5).slice(0, 3);
+  for (const value of pool) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sample';
+    button.dataset.q = value;
+    button.textContent = value;
+    samples.appendChild(button);
+  }
+
+  section.append(title, text, samples);
+  return section;
+}
+
+function showEmpty() {
+  feed.innerHTML = '';
+  feed.appendChild(buildEmpty());
+}
+
+function addUserMessage(text, thumbs) {
   hideEmpty();
   const wrapper = document.createElement('div');
   wrapper.className = 'msg msg--user';
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  bubble.textContent = text;
+
+  if (thumbs && thumbs.length) {
+    const row = document.createElement('div');
+    row.className = 'bubble__photos';
+    for (const src of thumbs) {
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = '';
+      row.appendChild(img);
+    }
+    bubble.appendChild(row);
+  }
+
+  const line = document.createElement('div');
+  line.className = 'bubble__text';
+  if (text) {
+    line.textContent = text;
+  } else {
+    line.classList.add('bubble__text--muted');
+    line.textContent = `[${(thumbs || []).length} фото]`;
+  }
+  bubble.appendChild(line);
+
   wrapper.appendChild(bubble);
   feed.appendChild(wrapper);
   scrollDown();
 }
 
-function addTyping() {
+function addProgress(label) {
   hideEmpty();
   const wrapper = document.createElement('div');
   wrapper.className = 'msg msg--bot';
   wrapper.dataset.typing = 'true';
-  wrapper.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+
+  const box = document.createElement('div');
+  box.className = 'progress';
+  const dots = document.createElement('div');
+  dots.className = 'typing';
+  dots.innerHTML = '<span></span><span></span><span></span>';
+  const caption = document.createElement('span');
+  caption.className = 'progress__label';
+  caption.textContent = label || 'Думаю…';
+  box.append(dots, caption);
+  wrapper.appendChild(box);
+
   feed.appendChild(wrapper);
   scrollDown();
-  return wrapper;
+  return { wrapper, caption };
+}
+
+function setProgress(progress, label) {
+  if (progress && progress.caption) progress.caption.textContent = label;
+}
+
+function metaLine(data) {
+  const parts = [];
+  if (data.modelLabel) parts.push(data.modelLabel);
+  if (data.searches) parts.push('поиск в интернете');
+  if (data.ms) parts.push(`${(data.ms / 1000).toFixed(1)} с`);
+  if (typeof data.cost === 'number' && data.cost > 0) parts.push(`$${data.cost.toFixed(4)}`);
+  return parts.join(' · ');
 }
 
 function addBotMessage(text, meta) {
@@ -147,15 +313,17 @@ function addBotMessage(text, meta) {
   actions.className = 'msg__actions';
   for (const [label, mode] of [
     ['Подробнее', 'more'],
-    ['Проще', 'simpler'],
+    ['Проще', 'simpler']
   ]) {
     const button = document.createElement('button');
+    button.type = 'button';
     button.className = 'ghost';
     button.textContent = label;
-    button.addEventListener('click', () => ask(state.lastQuestion, mode));
+    button.addEventListener('click', () => askQuestion({ text: state.lastQuestion, mode }));
     actions.appendChild(button);
   }
   const copy = document.createElement('button');
+  copy.type = 'button';
   copy.className = 'ghost';
   copy.textContent = 'Копировать';
   copy.addEventListener('click', async () => {
@@ -186,51 +354,195 @@ function errorMessage(text) {
   scrollDown();
 }
 
+function friendlyError(err) {
+  const code = err && err.code;
+  if (code === 'unauthorized') return 'Открой приложение через Telegram — без подписи доступ закрыт.';
+  if (code === 'forbidden') return 'Нет доступа. Попроси владельца добавить тебя в список.';
+  if (code === 'rate_limited') return 'Слишком много запросов подряд. Подожди пару минут.';
+  if (code === 'daily_cap') {
+    const cap = err.data && err.data.capUsd ? `$${err.data.capUsd}` : '';
+    return `Дневной лимит расходов${cap ? ` (${cap})` : ''} исчерпан. Лимит меняется в настройках.`;
+  }
+  if (code === 'too_big') return 'Фото слишком тяжёлые. Пришли меньше или по одному.';
+  if (code === 'too_many') return `За раз можно до ${MAX_PHOTOS} фото.`;
+  if (code === 'bad_image') return 'Не получилось прочитать одно из фото. Попробуй другое.';
+  if (code === 'no_images') return 'Не вижу фото — прикрепи ещё раз.';
+  if (code === 'vision_unavailable') return 'Фото понимает только DeepSeek Flash. Переключи модель в настройках.';
+  if (code === 'balance') return 'У выбранной модели закончился баланс. Возьми DeepSeek Flash.';
+  if (code === 'api_key') return 'Сервис модели не принял ключ. Возьми DeepSeek Flash.';
+  if (code === 'model_busy') return 'Модель перегружена. Повтори через полминуты.';
+  if (code === 'timeout') return 'Модель не ответила вовремя. Попробуй ещё раз.';
+  if (code === 'provider') return 'Сбой на стороне модели. Повтори через минуту.';
+  return 'Не получилось ответить. Попробуй ещё раз.';
+}
+
+/* ---------- фото ---------- */
+
+function renderTray() {
+  const count = state.attachments.length;
+  tray.hidden = count === 0;
+  trayCount.textContent = `${count} / ${MAX_PHOTOS}`;
+  trayList.innerHTML = '';
+  state.attachments.forEach((item, index) => {
+    const cell = document.createElement('div');
+    cell.className = 'thumb';
+    const img = document.createElement('img');
+    img.src = item.thumb;
+    img.alt = '';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'thumb__del';
+    remove.setAttribute('aria-label', 'Убрать фото');
+    remove.textContent = '✕';
+    remove.addEventListener('click', () => {
+      state.attachments.splice(index, 1);
+      renderTray();
+    });
+    cell.append(img, remove);
+    trayList.appendChild(cell);
+  });
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('decode'));
+    img.src = url;
+  });
+}
+
+/** Уменьшает фото на телефоне, чтобы 50 штук влезали в один запрос и не жгли токены. */
+async function shrinkPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    if (!width || !height) throw new Error('empty');
+    const scale = Math.min(1, MAX_SIDE / Math.max(width, height));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+
+    const thumbCanvas = document.createElement('canvas');
+    const thumbScale = Math.min(1, 180 / Math.max(canvas.width, canvas.height));
+    thumbCanvas.width = Math.max(1, Math.round(canvas.width * thumbScale));
+    thumbCanvas.height = Math.max(1, Math.round(canvas.height * thumbScale));
+    const thumbCtx = thumbCanvas.getContext('2d');
+    thumbCtx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
+
+    return { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: file.name || 'photo.jpg', dataUrl, thumb };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function addPhotos(fileList) {
+  const info = currentModel();
+  if (!info.vision) {
+    toast('Фото понимает только DeepSeek Flash');
+    return;
+  }
+  const files = Array.from(fileList || []);
+  let skipped = 0;
+  for (const file of files) {
+    if (state.attachments.length >= MAX_PHOTOS) {
+      skipped += 1;
+      continue;
+    }
+    if (!file.type || !file.type.startsWith('image/')) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      state.attachments.push(await shrinkPhoto(file));
+    } catch {
+      skipped += 1;
+    }
+    renderTray();
+  }
+  renderTray();
+  if (skipped) toast(skipped === 1 ? 'Одно фото не подошло' : `${skipped} фото не подошли`);
+  if (state.attachments.length >= MAX_PHOTOS) toast(`Максимум ${MAX_PHOTOS} фото за раз`);
+}
+
 /* ---------- запрос ---------- */
 
-async function ask(text, mode) {
-  const question = (text ?? '').trim();
-  if (!question || state.busy) return;
+function setBusy(busy) {
+  state.busy = busy;
+  sendBtn.disabled = busy;
+  photoBtn.disabled = busy;
+  if (!busy) setStatus('ok');
+}
 
-  state.busy = true;
-  sendBtn.disabled = true;
+async function askWithPhotos(photos, text, progress) {
+  const notes = [];
+  for (let i = 0; i < photos.length; i += PHOTO_BATCH) {
+    const batch = photos.slice(i, i + PHOTO_BATCH);
+    const upto = Math.min(i + PHOTO_BATCH, photos.length);
+    setProgress(progress, `Распознаю фото ${upto} из ${photos.length}…`);
+    const data = await api('/api/vision', {
+      method: 'POST',
+      body: JSON.stringify({ images: batch.map((p) => ({ id: p.id, data: p.dataUrl })), from: i })
+    });
+    if (Array.isArray(data.items)) notes.push(...data.items);
+  }
+  setProgress(progress, 'Решаю…');
+  return api('/api/photo-ask', {
+    method: 'POST',
+    body: JSON.stringify({ text, count: photos.length, notes: notes.map((n) => ({ index: n.index, text: n.text })) })
+  });
+}
+
+async function askQuestion({ text, photos = [], mode = null }) {
+  const question = (text || '').trim();
+  if (state.busy) return;
+  if (!question && !photos.length) return;
+  if (photos.length && !currentModel().vision) {
+    toast('Фото понимает только DeepSeek Flash');
+    return;
+  }
+
+  setBusy(true);
   setStatus('busy');
   state.lastQuestion = question;
 
   if (!mode) {
-    addUserMessage(question);
+    addUserMessage(question, photos.map((p) => p.thumb));
     textBox.value = '';
     autosize();
   }
 
-  const typing = addTyping();
+  const progress = addProgress(photos.length ? 'Распознаю фото…' : 'Думаю…');
   try {
-    const data = await api('/api/ask', { method: 'POST', body: JSON.stringify({ text: question, mode, threadId: state.threadId, model: state.pickedModel }) });
-    typing.remove();
-    const parts = [];
-    if (data.searches) parts.push('поиск в интернете');
-    if (data.ms) parts.push(`${(data.ms / 1000).toFixed(1)} с`);
-    if (typeof data.cost === 'number') parts.push(`$${data.cost.toFixed(4)} за сегодня`);
-    addBotMessage(data.text, parts.join(' · '));
-    setStatus('ok');
-  } catch (err) {
-    typing.remove();
-    const message = String(err.message || err);
-    if (message.includes('unauthorized')) {
-      errorMessage('Открой приложение через Telegram — без подписи доступ закрыт.');
-    } else if (message.includes('forbidden')) {
-      errorMessage('Нет доступа. Попроси владельца добавить тебя в список.');
-    } else if (message.includes('баланс') || message.includes('402')) {
-      errorMessage('На DeepSeek закончился баланс.');
+    let data;
+    if (photos.length) {
+      data = await askWithPhotos(photos, question, progress);
     } else {
-      errorMessage('Не получилось ответить. Попробуй ещё раз.');
-      console.error(err);
+      data = await api('/api/ask', {
+        method: 'POST',
+        body: JSON.stringify({ text: question, mode, threadId: state.threadId })
+      });
     }
+    progress.wrapper.remove();
+    if (typeof data.spentToday === 'number') state.spentToday = data.spentToday;
+    addBotMessage(data.text, metaLine(data));
+  } catch (err) {
+    progress.wrapper.remove();
+    errorMessage(friendlyError(err));
     setStatus('error');
+    console.error(err);
   } finally {
-    state.busy = false;
-    sendBtn.disabled = false;
-    setTimeout(() => setStatus('ok'), 600);
+    setBusy(false);
+    setTimeout(() => setStatus('ok'), 700);
   }
 }
 
@@ -245,65 +557,61 @@ textBox.addEventListener('input', autosize);
 textBox.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
-    ask(textBox.value);
+    submit();
   }
 });
 
+function submit() {
+  if (state.busy) return;
+  const text = textBox.value.trim();
+  const photos = state.attachments.slice();
+  if (!text && !photos.length) return;
+  state.attachments = [];
+  renderTray();
+  askQuestion({ text, photos });
+}
+
 form.addEventListener('submit', (event) => {
   event.preventDefault();
-  ask(textBox.value);
+  submit();
 });
 
-document.getElementById('samples')?.addEventListener('click', (event) => {
+photoBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const files = Array.from(fileInput.files || []);
+  fileInput.value = '';
+  await addPhotos(files);
+});
+
+document.getElementById('trayClear').addEventListener('click', () => {
+  state.attachments = [];
+  renderTray();
+});
+
+feed.addEventListener('click', (event) => {
   const button = event.target.closest('[data-q]');
-  if (button) ask(button.dataset.q);
+  if (button) {
+    askQuestion({ text: button.dataset.q });
+    return;
+  }
 });
 
 /* ---------- чипы ---------- */
 
 chips.addEventListener('click', async (event) => {
-  const button = event.target.closest('[data-chip]');
-  if (!button) return;
-  const chip = button.dataset.chip;
+  const chipEl = event.target.closest('[data-chip]');
+  if (!chipEl) return;
+  const chip = chipEl.dataset.chip;
 
   if (chip === 'search') {
-    const searchChip = document.querySelector('[data-chip="search"]');
-    const enabled = !(searchChip && searchChip.classList.contains('chip--on'));
-    if (searchChip) searchChip.classList.toggle('chip--on', enabled);
+    const enabled = !chipEl.classList.contains('chip--on');
+    chipEl.classList.toggle('chip--on', enabled);
     try {
-      await api('/api/settings', { method: 'POST', body: JSON.stringify({ searchMode: enabled ? 'auto' : 'off' }) });
-      toast(enabled ? 'Поиск включён: бот решает сам' : 'Поиск выключен');
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ search: enabled }) });
+      toast(enabled ? 'Поиск включён: Дип решает сам' : 'Поиск выключен');
     } catch {
-      if (searchChip) searchChip.classList.toggle('chip--on', !enabled);
+      chipEl.classList.toggle('chip--on', !enabled);
       toast('Не удалось переключить поиск');
-    }
-    return;
-  }
-
-  if (chip === 'free') {
-    const el = document.querySelector('[data-chip="free"]');
-    const on = !(el && el.classList.contains('chip--on'));
-    if (el) el.classList.toggle('chip--on', on);
-    try {
-      await api('/api/settings', { method: 'POST', body: JSON.stringify({ freeMode: on }) });
-      toast(on ? 'Свободный режим включён' : 'Свободный режим выключен');
-    } catch {
-      if (el) el.classList.toggle('chip--on', !on);
-      toast('Не удалось переключить');
-    }
-    return;
-  }
-
-  if (chip === 'lesson') {
-    state.lessonMode = !state.lessonMode;
-    button.classList.toggle('chip--on', state.lessonMode);
-    try {
-      await api('/api/settings', { method: 'POST', body: JSON.stringify({ lessonMode: state.lessonMode }) });
-      toast(state.lessonMode ? 'Режим урока включён' : 'Режим урока выключен');
-    } catch {
-      toast('Не удалось изменить режим');
-      state.lessonMode = !state.lessonMode;
-      button.classList.toggle('chip--on', state.lessonMode);
     }
     return;
   }
@@ -311,11 +619,10 @@ chips.addEventListener('click', async (event) => {
   if (chip === 'reset') {
     try {
       await api('/api/reset', { method: 'POST' });
-      feed.innerHTML = '';
       state.lastQuestion = '';
-      const restored = empty.cloneNode(true);
-      restored.id = 'empty';
-      feed.appendChild(restored);
+      state.attachments = [];
+      renderTray();
+      showEmpty();
       toast('Диалог очищен');
     } catch {
       toast('Не удалось очистить');
@@ -327,7 +634,7 @@ chips.addEventListener('click', async (event) => {
     toast('Сначала задай вопрос');
     return;
   }
-  ask(state.lastQuestion, chip);
+  askQuestion({ text: state.lastQuestion, mode: chip });
 });
 
 /* ---------- настройки ---------- */
@@ -341,55 +648,47 @@ sheet.addEventListener('click', (event) => {
   if (event.target.closest('[data-close]')) openSheet(false);
 });
 
+function renderFoot() {
+  const foot = document.getElementById('sheetFoot');
+  const parts = [];
+  if (state.capUsd > 0) parts.push(`Сегодня $${state.spentToday.toFixed(4)} из $${state.capUsd}`);
+  parts.push(currentModel().vision ? 'Фото: до 50 за раз' : 'Фото: только DeepSeek Flash');
+  foot.textContent = parts.join(' · ');
+}
+
 document.getElementById('settingsBtn').addEventListener('click', async () => {
   openSheet(true);
   try {
     const data = await api('/api/settings');
-    state.settings = data;
-    state.lessonMode = !!data.lessonMode;
-    document.querySelectorAll('#styleSeg button').forEach((b) => {
-      b.dataset.active = String(b.dataset.v === data.style);
-    });
-    document.querySelectorAll('#modelList button').forEach((b) => {
-      b.dataset.active = String(b.dataset.v === data.model);
-    });
-    document.getElementById('sheetFoot').textContent = data.model === 'deepseek-v4-pro' ? 'Модель V4 Pro дороже в 3–4 раза' : '';
+    state.model = data.model || state.model;
+    state.capUsd = typeof data.capUsd === 'number' ? data.capUsd : state.capUsd;
+    for (const button of document.querySelectorAll('#styleSeg button')) {
+      button.dataset.active = String(button.dataset.v === data.style);
+    }
+    renderModels();
+    applyModelUi();
+    renderFoot();
   } catch {
     toast('Настройки доступны только владельцу');
   }
 });
 
-for (const segment of ['styleSeg', 'modelList']) {
-  document.getElementById(segment)?.addEventListener('click', (event) => {
-    const button = event.target.closest('button');
-    if (!button) return;
-    document.querySelectorAll(`#${segment} button`).forEach((b) => {
-      b.dataset.active = String(b === button);
-    });
-  });
-}
-
-document.getElementById('lessonSwitch')?.addEventListener('click', (event) => {
-  const next = event.currentTarget.getAttribute('aria-pressed') !== 'true';
-  event.currentTarget.setAttribute('aria-pressed', String(next));
-  state.lessonMode = next;
+document.getElementById('styleSeg').addEventListener('click', async (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  for (const other of document.querySelectorAll('#styleSeg button')) {
+    other.dataset.active = String(other === button);
+  }
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ style: button.dataset.v }) });
+    toast('Стиль сохранён');
+  } catch {
+    toast('Не удалось сохранить стиль');
+  }
 });
 
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  const style = document.querySelector('#styleSeg button[data-active="true"]')?.dataset.v;
-  const model = document.querySelector('#modelList button[data-active="true"]')?.dataset.v;
-  state.pickedModel = model === 'glm-dan' ? 'glm-dan' : null;
-  try {
-    await api('/api/settings', {
-      method: 'POST',
-      body: JSON.stringify({ style, model }),
-    });
-    modelLabel.textContent = model === 'deepseek-v4-pro' ? 'DeepSeek V4 Pro' : 'DeepSeek Flash';
-    toast('Сохранено');
-    openSheet(false);
-  } catch {
-    toast('Сохранять может только владелец');
-  }
+document.getElementById('saveBtn').addEventListener('click', () => {
+  openSheet(false);
 });
 
 /* ---------- чаты ---------- */
@@ -405,15 +704,14 @@ async function loadThreads() {
   const list = document.getElementById('threadList');
   try {
     const data = await api('/api/threads');
-    state.activeThread = data.active;
     list.innerHTML = '';
     for (const thread of data.threads) {
       const row = document.createElement('div');
       row.className = 'thread';
       row.dataset.active = String(thread.id === data.active);
-      const date = new Date(thread.updatedAt * 1000);
-      row.innerHTML = `<div class="thread__body"><div class="thread__title"></div><div class="thread__date"></div></div><button class="thread__del" aria-label="Удалить">✕</button>`;
+      row.innerHTML = '<div class="thread__body"><div class="thread__title"></div><div class="thread__date"></div></div><button class="thread__del" aria-label="Удалить">✕</button>';
       row.querySelector('.thread__title').textContent = thread.title;
+      const date = new Date(thread.updatedAt * 1000);
       row.querySelector('.thread__date').textContent = `${date.toLocaleDateString('ru-RU')} ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
       row.addEventListener('click', async (event) => {
         if (event.target.closest('.thread__del')) {
@@ -440,9 +738,7 @@ async function openThread(threadId) {
   const history = await api(`/api/history?thread=${threadId}`);
   const messages = history.messages || [];
   if (!messages.length) {
-    const restored = empty.cloneNode(true);
-    restored.id = 'empty';
-    feed.appendChild(restored);
+    feed.appendChild(buildEmpty());
   }
   for (const message of messages.slice(-30)) {
     if (message.role === 'user') {
@@ -483,7 +779,7 @@ function wireGate() {
   const button = document.getElementById('gateBtn');
   const input = document.getElementById('gateKey');
   if (!button || !input) return;
-  const submit = () => {
+  const submitKey = () => {
     const key = input.value.trim();
     if (key.length < 16) {
       document.getElementById('gateErr').textContent = 'Ключ короткий — скопируй целиком из ссылки.';
@@ -492,9 +788,9 @@ function wireGate() {
     localStorage.setItem('studyKey', key);
     location.reload();
   };
-  button.addEventListener('click', submit);
+  button.addEventListener('click', submitKey);
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') submit();
+    if (event.key === 'Enter') submitKey();
   });
 }
 
@@ -525,13 +821,24 @@ async function boot() {
   if (tg) {
     tg.ready();
     tg.expand();
+    const supports = (version) => {
+      try {
+        return typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast(version);
+      } catch {
+        return false;
+      }
+    };
     try {
-      if (typeof tg.requestFullscreen === 'function') tg.requestFullscreen();
-      if (typeof tg.disableVerticalSwipes === 'function') tg.disableVerticalSwipes();
+      if (supports('8.0') && typeof tg.requestFullscreen === 'function') tg.requestFullscreen();
     } catch {}
     try {
-      tg.setHeaderColor('#0b0b0e');
-      tg.setBackgroundColor('#0b0b0e');
+      if (supports('7.7') && typeof tg.disableVerticalSwipes === 'function') tg.disableVerticalSwipes();
+    } catch {}
+    try {
+      if (supports('6.1')) {
+        tg.setHeaderColor('#0b0b0e');
+        tg.setBackgroundColor('#0b0b0e');
+      }
     } catch {}
     applyInsets();
     try {
@@ -546,17 +853,25 @@ async function boot() {
     return;
   }
 
+  renderModels();
+  applyModelUi();
+
   try {
     const me = await api('/api/me');
     if (!me.allowed) {
       errorMessage('Нет доступа. Попроси владельца добавить твой аккаунт.');
       return;
     }
-    modelLabel.textContent = me.model === 'deepseek-v4-pro' ? 'DeepSeek V4 Pro' : 'DeepSeek Flash';
-    state.lessonMode = !!me.lessonMode;
-    state.searchMode = me.searchMode !== 'off';
-    document.querySelector('[data-chip="free"]')?.classList.toggle('chip--on', !!me.freeMode);
-    document.querySelector('[data-chip="search"]')?.classList.toggle('chip--on', state.searchMode);
+    if (Array.isArray(me.models) && me.models.length) state.models = me.models;
+    state.model = me.model || state.model;
+    state.spentToday = Number(me.costToday) || 0;
+    state.capUsd = Number(me.capUsd) || 0;
+
+    renderModels();
+    applyModelUi();
+
+    document.querySelector('[data-chip="search"]')?.classList.toggle('chip--on', me.search !== false);
+    renderFoot();
 
     const history = await api('/api/history');
     const messages = history.messages || [];
@@ -573,7 +888,7 @@ async function boot() {
       scrollDown(false);
     }
   } catch (err) {
-    if (String(err.message).includes('unauthorized')) {
+    if (err.code === 'unauthorized') {
       if (state.appKey && !state.initData) {
         localStorage.removeItem('studyKey');
         state.appKey = '';
@@ -587,5 +902,5 @@ async function boot() {
   }
 }
 
-renderSamples();
+if (!document.getElementById('empty')) feed.appendChild(buildEmpty());
 boot();
